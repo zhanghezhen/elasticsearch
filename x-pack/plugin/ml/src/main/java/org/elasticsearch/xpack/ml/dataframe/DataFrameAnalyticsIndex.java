@@ -25,6 +25,7 @@ import org.elasticsearch.common.Nullable;
 import org.elasticsearch.common.collect.ImmutableOpenMap;
 import org.elasticsearch.common.settings.Settings;
 import org.elasticsearch.index.IndexSortConfig;
+import org.elasticsearch.index.mapper.KeywordFieldMapper;
 import org.elasticsearch.search.sort.SortOrder;
 import org.elasticsearch.xpack.core.ClientHelper;
 import org.elasticsearch.xpack.core.ml.dataframe.DataFrameAnalyticsConfig;
@@ -163,17 +164,9 @@ public final class DataFrameAnalyticsIndex {
     private static Map<String, Object> createAdditionalMappings(DataFrameAnalyticsConfig config, Map<String, Object> mappingsProperties) {
         Map<String, Object> properties = new HashMap<>();
         Map<String, String> idCopyMapping = new HashMap<>();
-        idCopyMapping.put("type", "keyword");
+        idCopyMapping.put("type", KeywordFieldMapper.CONTENT_TYPE);
         properties.put(ID_COPY, idCopyMapping);
-        for (Map.Entry<String, String> entry
-                : config.getAnalysis().getExplicitlyMappedFields(config.getDest().getResultsField()).entrySet()) {
-            String destFieldPath = entry.getKey();
-            String sourceFieldPath = entry.getValue();
-            Object sourceFieldMapping = mappingsProperties.get(sourceFieldPath);
-            if (sourceFieldMapping != null) {
-                properties.put(destFieldPath, sourceFieldMapping);
-            }
-        }
+        properties.putAll(config.getAnalysis().getExplicitlyMappedFields(mappingsProperties, config.getDest().getResultsField()));
         return properties;
     }
 
@@ -239,4 +232,3 @@ public final class DataFrameAnalyticsIndex {
         }
     }
 }
-
