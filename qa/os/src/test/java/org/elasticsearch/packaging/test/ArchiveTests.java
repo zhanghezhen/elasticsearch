@@ -20,7 +20,6 @@
 package org.elasticsearch.packaging.test;
 
 import org.apache.http.client.fluent.Request;
-import org.elasticsearch.packaging.util.Archives;
 import org.elasticsearch.packaging.util.FileUtils;
 import org.elasticsearch.packaging.util.Installation;
 import org.elasticsearch.packaging.util.Platforms;
@@ -33,12 +32,10 @@ import java.nio.file.Path;
 import java.nio.file.Paths;
 import java.util.stream.Stream;
 
-import static org.elasticsearch.packaging.util.Archives.ARCHIVE_OWNER;
 import static org.elasticsearch.packaging.util.Archives.installArchive;
 import static org.elasticsearch.packaging.util.Archives.verifyArchiveInstallation;
-import static org.elasticsearch.packaging.util.FileMatcher.Fileness.File;
-import static org.elasticsearch.packaging.util.FileMatcher.file;
-import static org.elasticsearch.packaging.util.FileMatcher.p660;
+import static org.elasticsearch.packaging.util.FileExistenceMatchers.fileDoesNotExist;
+import static org.elasticsearch.packaging.util.FileExistenceMatchers.fileExists;
 import static org.elasticsearch.packaging.util.FileUtils.append;
 import static org.elasticsearch.packaging.util.FileUtils.cp;
 import static org.elasticsearch.packaging.util.FileUtils.getTempDir;
@@ -51,6 +48,7 @@ import static org.hamcrest.CoreMatchers.equalTo;
 import static org.hamcrest.CoreMatchers.is;
 import static org.hamcrest.CoreMatchers.not;
 import static org.hamcrest.Matchers.isEmptyString;
+import static org.junit.Assume.assumeFalse;
 import static org.junit.Assume.assumeThat;
 import static org.junit.Assume.assumeTrue;
 
@@ -58,6 +56,9 @@ public class ArchiveTests extends PackagingTestCase {
 
     @BeforeClass
     public static void filterDistros() {
+        // Muted on Windows see: https://github.com/elastic/elasticsearch/issues/50825
+        assumeFalse(System.getProperty("os.name").startsWith("Windows"));
+
         assumeTrue("only archives", distribution.isArchive());
     }
 
@@ -105,33 +106,6 @@ public class ArchiveTests extends PackagingTestCase {
 
     }
 
-    public void test40CreateKeystoreManually() throws Exception {
-        final Installation.Executables bin = installation.executables();
-
-        Platforms.onLinux(() -> sh.run("sudo -u " + ARCHIVE_OWNER + " " + bin.keystoreTool + " create"));
-
-        // this is a hack around the fact that we can't run a command in the same session as the same user but not as administrator.
-        // the keystore ends up being owned by the Administrators group, so we manually set it to be owned by the vagrant user here.
-        // from the server's perspective the permissions aren't really different, this is just to reflect what we'd expect in the tests.
-        // when we run these commands as a role user we won't have to do this
-        Platforms.onWindows(() -> {
-            sh.run(bin.keystoreTool + " create");
-            sh.chown(installation.config("elasticsearch.keystore"));
-        });
-
-        assertThat(installation.config("elasticsearch.keystore"), file(File, ARCHIVE_OWNER, ARCHIVE_OWNER, p660));
-
-        Platforms.onLinux(() -> {
-            final Result r = sh.run("sudo -u " + ARCHIVE_OWNER + " " + bin.keystoreTool + " list");
-            assertThat(r.stdout, containsString("keystore.seed"));
-        });
-
-        Platforms.onWindows(() -> {
-            final Result r = sh.run(bin.keystoreTool + " list");
-            assertThat(r.stdout, containsString("keystore.seed"));
-        });
-    }
-
     public void test50StartAndStop() throws Exception {
         // cleanup from previous test
         rm(installation.config("elasticsearch.keystore"));
@@ -151,7 +125,7 @@ public class ArchiveTests extends PackagingTestCase {
             ? "gc.log.0.current"
             : "gc.log";
 
-        assertTrue("gc logs exist", Files.exists(installation.logs.resolve(gcLogName)));
+        assertThat(installation.logs.resolve(gcLogName), fileExists());
         ServerUtils.runElasticsearchTests();
 
         stopElasticsearch();
@@ -251,22 +225,6 @@ public class ArchiveTests extends PackagingTestCase {
         });
     }
 
-    public void test60AutoCreateKeystore() throws Exception {
-        sh.chown(installation.config("elasticsearch.keystore"));
-        assertThat(installation.config("elasticsearch.keystore"), file(File, ARCHIVE_OWNER, ARCHIVE_OWNER, p660));
-
-        final Installation.Executables bin = installation.executables();
-        Platforms.onLinux(() -> {
-            final Result result = sh.run("sudo -u " + ARCHIVE_OWNER + " " + bin.keystoreTool + " list");
-            assertThat(result.stdout, containsString("keystore.seed"));
-        });
-
-        Platforms.onWindows(() -> {
-            final Result result = sh.run(bin.keystoreTool + " list");
-            assertThat(result.stdout, containsString("keystore.seed"));
-        });
-    }
-
     public void test70CustomPathConfAndJvmOptions() throws Exception {
 
         final Path tempConf = getTempDir().resolve("esconf-alternate");
@@ -296,10 +254,66 @@ public class ArchiveTests extends PackagingTestCase {
             assertThat(nodesResponse, containsString("\"heap_init_in_bytes\":536870912"));
             assertThat(nodesResponse, containsString("\"using_compressed_ordinary_object_pointers\":\"false\""));
 
-            Archives.stopElasticsearch(installation);
+            stopElasticsearch();
 
         } finally {
             rm(tempConf);
+        }
+    }
+
+    public void test71CustomJvmOptionsDirectoryFile() throws Exception {
+        final Path heapOptions = installation.config(Paths.get("jvm.options.d", "heap.options"));
+        try {
+            append(heapOptions, "-Xms512m\n-Xmx512m\n");
+
+            startElasticsearch();
+
+            final String nodesResponse = makeRequest(Request.Get("http://localhost:9200/_nodes"));
+            assertThat(nodesResponse, containsString("\"heap_init_in_bytes\":536870912"));
+
+            stopElasticsearch();
+        } finally {
+            rm(heapOptions);
+        }
+    }
+
+    public void test72CustomJvmOptionsDirectoryFilesAreProcessedInSortedOrder() throws Exception {
+        final Path firstOptions = installation.config(Paths.get("jvm.options.d", "first.options"));
+        final Path secondOptions = installation.config(Paths.get("jvm.options.d", "second.options"));
+        try {
+            /*
+             * We override the heap in the first file, and disable compressed oops, and override the heap in the second file. By doing this,
+             * we can test that both files are processed by the JVM options parser, and also that they are processed in lexicographic order.
+             */
+            append(firstOptions, "-Xms384m\n-Xmx384m\n-XX:-UseCompressedOops\n");
+            append(secondOptions, "-Xms512m\n-Xmx512m\n");
+
+            startElasticsearch();
+
+            final String nodesResponse = makeRequest(Request.Get("http://localhost:9200/_nodes"));
+            assertThat(nodesResponse, containsString("\"heap_init_in_bytes\":536870912"));
+            assertThat(nodesResponse, containsString("\"using_compressed_ordinary_object_pointers\":\"false\""));
+
+            stopElasticsearch();
+        } finally {
+            rm(firstOptions);
+            rm(secondOptions);
+        }
+    }
+
+    public void test73CustomJvmOptionsDirectoryFilesWithoutOptionsExtensionIgnored() throws Exception {
+        final Path jvmOptionsIgnored = installation.config(Paths.get("jvm.options.d", "jvm.options.ignored"));
+        try {
+            append(jvmOptionsIgnored, "-Xms512\n-Xmx512m\n");
+
+            startElasticsearch();
+
+            final String nodesResponse = makeRequest(Request.Get("http://localhost:9200/_nodes"));
+            assertThat(nodesResponse, containsString("\"heap_init_in_bytes\":1073741824"));
+
+            stopElasticsearch();
+        } finally {
+            rm(jvmOptionsIgnored);
         }
     }
 
@@ -338,7 +352,7 @@ public class ArchiveTests extends PackagingTestCase {
         final Installation.Executables bin = installation.executables();
 
         if (distribution().isDefault()) {
-            assertTrue(Files.exists(installation.lib.resolve("tools").resolve("security-cli")));
+            assertThat(installation.lib.resolve("tools").resolve("security-cli"), fileExists());
             final Platforms.PlatformAction action = () -> {
                 Result result = sh.run(bin.certutilTool + " --help");
                 assertThat(result.stdout, containsString("Simplifies certificate creation for use with the Elastic Stack"));
@@ -351,7 +365,7 @@ public class ArchiveTests extends PackagingTestCase {
             Platforms.onLinux(action);
             Platforms.onWindows(action);
         } else {
-            assertFalse(Files.exists(installation.lib.resolve("tools").resolve("security-cli")));
+            assertThat(installation.lib.resolve("tools").resolve("security-cli"), fileDoesNotExist());
         }
     }
 
@@ -393,7 +407,7 @@ public class ArchiveTests extends PackagingTestCase {
         sh.setWorkingDirectory(getTempDir());
 
         startElasticsearch();
-        Archives.stopElasticsearch(installation);
+        stopElasticsearch();
 
         Result result = sh.run("echo y | " + installation.executables().nodeTool + " unsafe-bootstrap");
         assertThat(result.stdout, containsString("Master node was successfully bootstrapped"));

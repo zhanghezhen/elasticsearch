@@ -22,7 +22,6 @@ package org.elasticsearch.rest.action.search;
 import org.apache.logging.log4j.LogManager;
 import org.elasticsearch.action.search.SearchAction;
 import org.elasticsearch.action.search.SearchRequest;
-import org.elasticsearch.action.search.SearchResponse;
 import org.elasticsearch.action.support.IndicesOptions;
 import org.elasticsearch.client.node.NodeClient;
 import org.elasticsearch.common.Booleans;
@@ -31,9 +30,9 @@ import org.elasticsearch.common.logging.DeprecationLogger;
 import org.elasticsearch.common.xcontent.XContentParser;
 import org.elasticsearch.index.query.QueryBuilder;
 import org.elasticsearch.rest.BaseRestHandler;
-import org.elasticsearch.rest.RestController;
 import org.elasticsearch.rest.RestRequest;
 import org.elasticsearch.rest.action.RestActions;
+import org.elasticsearch.rest.action.RestCancellableNodeClient;
 import org.elasticsearch.rest.action.RestStatusToXContentListener;
 import org.elasticsearch.search.Scroll;
 import org.elasticsearch.search.builder.SearchSourceBuilder;
@@ -48,9 +47,12 @@ import java.io.IOException;
 import java.util.Arrays;
 import java.util.Collections;
 import java.util.HashSet;
+import java.util.List;
 import java.util.Set;
 import java.util.function.IntConsumer;
 
+import static java.util.Arrays.asList;
+import static java.util.Collections.unmodifiableList;
 import static org.elasticsearch.common.unit.TimeValue.parseTimeValue;
 import static org.elasticsearch.rest.RestRequest.Method.GET;
 import static org.elasticsearch.rest.RestRequest.Method.POST;
@@ -74,20 +76,21 @@ public class RestSearchAction extends BaseRestHandler {
     public static final String TYPES_DEPRECATION_MESSAGE = "[types removal]" +
         " Specifying types in search requests is deprecated.";
 
-    public RestSearchAction(RestController controller) {
-        controller.registerHandler(GET, "/_search", this);
-        controller.registerHandler(POST, "/_search", this);
-        controller.registerHandler(GET, "/{index}/_search", this);
-        controller.registerHandler(POST, "/{index}/_search", this);
-
-        // Deprecated typed endpoints.
-        controller.registerHandler(GET, "/{index}/{type}/_search", this);
-        controller.registerHandler(POST, "/{index}/{type}/_search", this);
-    }
-
     @Override
     public String getName() {
         return "search_action";
+    }
+
+    @Override
+    public List<Route> routes() {
+        return unmodifiableList(asList(
+            new Route(GET, "/_search"),
+            new Route(POST, "/_search"),
+            new Route(GET, "/{index}/_search"),
+            new Route(POST, "/{index}/_search"),
+            // Deprecated typed endpoints.
+            new Route(GET, "/{index}/{type}/_search"),
+            new Route(POST, "/{index}/{type}/_search")));
     }
 
     @Override
@@ -110,8 +113,8 @@ public class RestSearchAction extends BaseRestHandler {
             parseSearchRequest(searchRequest, request, parser, setSize));
 
         return channel -> {
-            RestStatusToXContentListener<SearchResponse> listener = new RestStatusToXContentListener<>(channel);
-            HttpChannelTaskHandler.INSTANCE.execute(client, request.getHttpChannel(), searchRequest, SearchAction.INSTANCE, listener);
+            RestCancellableNodeClient cancelClient = new RestCancellableNodeClient(client, request.getHttpChannel());
+            cancelClient.execute(SearchAction.INSTANCE, searchRequest, new RestStatusToXContentListener<>(channel));
         };
     }
 
