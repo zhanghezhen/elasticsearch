@@ -38,7 +38,6 @@ import org.elasticsearch.index.mapper.GeoShapeIndexer;
 import org.elasticsearch.test.ESTestCase;
 
 import java.util.Arrays;
-import java.util.List;
 
 import static org.elasticsearch.common.geo.GeoTestUtils.encodeDecodeLat;
 import static org.elasticsearch.common.geo.GeoTestUtils.encodeDecodeLon;
@@ -247,7 +246,7 @@ public class GeoGridTilerTests extends ESTestCase {
     private Geometry boxToGeo(GeoBoundingBox geoBox) {
         // turn into polygon
         if (geoBox.right() < geoBox.left() && geoBox.right() != -180) {
-            return new MultiPolygon(List.of(
+            return new MultiPolygon(Arrays.asList(
                 new Polygon(new LinearRing(
                     new double[] { -180, geoBox.right(), geoBox.right(), -180, -180 },
                     new double[] { geoBox.bottom(), geoBox.bottom(), geoBox.top(), geoBox.top(), geoBox.bottom() })),
