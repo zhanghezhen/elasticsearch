@@ -32,6 +32,7 @@ import org.elasticsearch.search.aggregations.InternalAggregation;
 import org.elasticsearch.search.aggregations.ParsedAggregation;
 import org.elasticsearch.search.aggregations.matrix.stats.InternalMatrixStats.Fields;
 import org.elasticsearch.search.aggregations.pipeline.PipelineAggregator;
+import org.elasticsearch.search.aggregations.pipeline.PipelineAggregator.PipelineTree;
 import org.elasticsearch.test.InternalAggregationTestCase;
 
 import java.io.IOException;
@@ -69,7 +70,7 @@ public class InternalMatrixStatsTests extends InternalAggregationTestCase<Intern
 
     @Override
     protected InternalMatrixStats createTestInstance(String name, List<PipelineAggregator> pipelineAggregators,
-                                                     Map<String, Object> metaData) {
+                                                     Map<String, Object> metadata) {
         double[] values = new double[fields.length];
         for (int i = 0; i < fields.length; i++) {
             values[i] = randomDouble();
@@ -78,7 +79,7 @@ public class InternalMatrixStatsTests extends InternalAggregationTestCase<Intern
         RunningStats runningStats = new RunningStats();
         runningStats.add(fields, values);
         MatrixStatsResults matrixStatsResults = hasMatrixStatsResults ? new MatrixStatsResults(runningStats) : null;
-        return new InternalMatrixStats(name, 1L, runningStats, matrixStatsResults, Collections.emptyList(), metaData);
+        return new InternalMatrixStats(name, 1L, runningStats, matrixStatsResults, Collections.emptyList(), metadata);
     }
 
     @Override
@@ -92,7 +93,7 @@ public class InternalMatrixStatsTests extends InternalAggregationTestCase<Intern
         long docCount = instance.getDocCount();
         RunningStats runningStats = instance.getStats();
         MatrixStatsResults matrixStatsResults = instance.getResults();
-        Map<String, Object> metaData = instance.getMetaData();
+        Map<String, Object> metadata = instance.getMetadata();
         switch (between(0, 3)) {
         case 0:
             name += randomAlphaOfLength(5);
@@ -116,15 +117,15 @@ public class InternalMatrixStatsTests extends InternalAggregationTestCase<Intern
             break;
         case 3:
         default:
-            if (metaData == null) {
-                metaData = new HashMap<>(1);
+            if (metadata == null) {
+                metadata = new HashMap<>(1);
             } else {
-                metaData = new HashMap<>(instance.getMetaData());
+                metadata = new HashMap<>(instance.getMetadata());
             }
-            metaData.put(randomAlphaOfLength(15), randomInt());
+            metadata.put(randomAlphaOfLength(15), randomInt());
             break;
         }
-        return new InternalMatrixStats(name, docCount, runningStats, matrixStatsResults, Collections.emptyList(), metaData);
+        return new InternalMatrixStats(name, docCount, runningStats, matrixStatsResults, Collections.emptyList(), metadata);
     }
 
     @Override
@@ -162,8 +163,8 @@ public class InternalMatrixStatsTests extends InternalAggregationTestCase<Intern
 
         ScriptService mockScriptService = mockScriptService();
         MockBigArrays bigArrays = new MockBigArrays(new MockPageCacheRecycler(Settings.EMPTY), new NoneCircuitBreakerService());
-        InternalAggregation.ReduceContext context =
-            new InternalAggregation.ReduceContext(bigArrays, mockScriptService, true);
+        InternalAggregation.ReduceContext context = InternalAggregation.ReduceContext.forFinalReduction(
+                bigArrays, mockScriptService, b -> {}, PipelineTree.EMPTY);
         InternalMatrixStats reduced = (InternalMatrixStats) shardResults.get(0).reduce(shardResults, context);
         multiPassStats.assertNearlyEqual(reduced.getResults());
     }

@@ -10,6 +10,7 @@ import org.elasticsearch.geometry.Point;
 import org.elasticsearch.search.sort.SortOrder;
 import org.elasticsearch.xpack.ql.expression.Expression;
 import org.elasticsearch.xpack.ql.expression.FieldAttribute;
+import org.elasticsearch.xpack.ql.expression.Foldables;
 import org.elasticsearch.xpack.ql.expression.Literal;
 import org.elasticsearch.xpack.ql.expression.NamedExpression;
 import org.elasticsearch.xpack.ql.expression.function.Function;
@@ -36,11 +37,8 @@ import org.elasticsearch.xpack.ql.querydsl.query.GeoDistanceQuery;
 import org.elasticsearch.xpack.ql.querydsl.query.NotQuery;
 import org.elasticsearch.xpack.ql.querydsl.query.Query;
 import org.elasticsearch.xpack.ql.querydsl.query.ScriptQuery;
-import org.elasticsearch.xpack.ql.querydsl.query.TermsQuery;
 import org.elasticsearch.xpack.ql.tree.Source;
-import org.elasticsearch.xpack.ql.type.DataType;
 import org.elasticsearch.xpack.ql.type.DataTypes;
-import org.elasticsearch.xpack.ql.util.CollectionUtils;
 import org.elasticsearch.xpack.ql.util.ReflectionUtils;
 import org.elasticsearch.xpack.sql.SqlIllegalArgumentException;
 import org.elasticsearch.xpack.sql.expression.function.aggregate.Avg;
@@ -81,15 +79,13 @@ import org.elasticsearch.xpack.sql.querydsl.agg.TopHitsAgg;
 import org.elasticsearch.xpack.sql.type.SqlDataTypeConverter;
 import org.elasticsearch.xpack.sql.util.Check;
 
+import java.util.ArrayList;
 import java.util.Arrays;
-import java.util.LinkedHashSet;
 import java.util.List;
-import java.util.Set;
 
 import static java.util.Collections.singletonList;
 import static org.elasticsearch.xpack.ql.expression.Expressions.id;
-import static org.elasticsearch.xpack.sql.expression.Foldables.doubleValuesOf;
-import static org.elasticsearch.xpack.sql.expression.Foldables.valueOf;
+import static org.elasticsearch.xpack.ql.expression.Foldables.valueOf;
 
 final class QueryTranslator {
 
@@ -460,23 +456,7 @@ final class QueryTranslator {
                 aggFilter = new AggFilter(id(in.value()), in.asScript());
             }
             else {
-                Query q = null;
-                if (in.value() instanceof FieldAttribute) {
-                    // equality should always be against an exact match (which is important for strings)
-                    FieldAttribute fa = (FieldAttribute) in.value();
-                    List<Expression> list = in.list();
-                    // TODO: this needs to be handled inside the optimizer
-                    list.removeIf(e -> DataTypes.isNull(e.dataType()));
-                    DataType dt = list.get(0).dataType();
-                    Set<Object> set = new LinkedHashSet<>(CollectionUtils.mapSize(list.size()));
-                    for (Expression e : list) {
-                        set.add(SqlDataTypeConverter.convert(e.fold(), dt));
-                    }
-                    q = new TermsQuery(in.source(), fa.exactAttribute().name(), set);
-                } else {
-                    q = new ScriptQuery(in.source(), in.asScript());
-                }
-                query = handler.wrapFunctionQuery(in, in.value(), q);
+                query = org.elasticsearch.xpack.ql.planner.ExpressionTranslators.InComparisons.doTranslate(in, handler);
             }
             return new QueryTranslation(query, aggFilter);
         }
@@ -636,7 +616,7 @@ final class QueryTranslator {
 
         @Override
         protected LeafAgg toAgg(String id, Percentiles p) {
-            return new PercentilesAgg(id, field(p), doubleValuesOf(p.percents()));
+            return new PercentilesAgg(id, field(p), foldAndConvertToDoubles(p.percents()));
         }
     }
 
@@ -644,7 +624,7 @@ final class QueryTranslator {
 
         @Override
         protected LeafAgg toAgg(String id, PercentileRanks p) {
-            return new PercentileRanksAgg(id, field(p), doubleValuesOf(p.values()));
+            return new PercentileRanksAgg(id, field(p), foldAndConvertToDoubles(p.values()));
         }
     }
 
@@ -696,5 +676,13 @@ final class QueryTranslator {
         }
 
         protected abstract LeafAgg toAgg(String id, C f);
+    }
+
+    private static List<Double> foldAndConvertToDoubles(List<Expression> list) {
+        List<Double> values = new ArrayList<>(list.size());
+        for (Expression e : list) {
+            values.add((Double) SqlDataTypeConverter.convert(Foldables.valueOf(e), DataTypes.DOUBLE));
+        }
+        return values;
     }
 }

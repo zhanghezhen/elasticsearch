@@ -66,9 +66,9 @@ class AutoDateHistogramAggregator extends DeferableBucketAggregator {
 
     AutoDateHistogramAggregator(String name, AggregatorFactories factories, int numBuckets, RoundingInfo[] roundingInfos,
             @Nullable ValuesSource.Numeric valuesSource, DocValueFormat formatter, SearchContext aggregationContext, Aggregator parent,
-            List<PipelineAggregator> pipelineAggregators, Map<String, Object> metaData) throws IOException {
+            List<PipelineAggregator> pipelineAggregators, Map<String, Object> metadata) throws IOException {
 
-        super(name, factories, aggregationContext, parent, pipelineAggregators, metaData);
+        super(name, factories, aggregationContext, parent, pipelineAggregators, metadata);
         this.targetBuckets = numBuckets;
         this.valuesSource = valuesSource;
         this.formatter = formatter;
@@ -179,14 +179,14 @@ class AutoDateHistogramAggregator extends DeferableBucketAggregator {
 
         // the contract of the histogram aggregation is that shards must return
         // buckets ordered by key in ascending order
-        CollectionUtil.introSort(buckets, BucketOrder.key(true).comparator(this));
+        CollectionUtil.introSort(buckets, BucketOrder.key(true).comparator());
 
         // value source will be null for unmapped fields
         InternalAutoDateHistogram.BucketInfo emptyBucketInfo = new InternalAutoDateHistogram.BucketInfo(roundingInfos, roundingIdx,
                 buildEmptySubAggregations());
 
         return new InternalAutoDateHistogram(name, buckets, targetBuckets, emptyBucketInfo,
-            formatter, pipelineAggregators(), metaData(), 1);
+            formatter, pipelineAggregators(), metadata(), 1);
     }
 
     @Override
@@ -194,7 +194,7 @@ class AutoDateHistogramAggregator extends DeferableBucketAggregator {
         InternalAutoDateHistogram.BucketInfo emptyBucketInfo = new InternalAutoDateHistogram.BucketInfo(roundingInfos, roundingIdx,
                 buildEmptySubAggregations());
         return new InternalAutoDateHistogram(name, Collections.emptyList(), targetBuckets, emptyBucketInfo, formatter,
-                pipelineAggregators(), metaData(), 1);
+                pipelineAggregators(), metadata(), 1);
     }
 
     @Override
